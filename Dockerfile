@@ -5,7 +5,7 @@
 
 FROM alpine:edge AS builder
 
-LABEL maintainer="Ranadeep Polavarapu <RanadeepPolavarapu@users.noreply.github.com>"
+LABEL maintainer="sola97 <my@sora.vip> "
 
 ENV NGINX_VERSION 1.16.1
 ENV NGX_BROTLI_COMMIT 25f86f0bac1101b6512135eac5f93c49c63609e3
@@ -63,6 +63,7 @@ RUN GPG_KEYS=B0F4253373F8F6F510D42178520A9993A1C052F8 \
   --add-module=/usr/src/headers-more-nginx-module \
   --add-module=/usr/src/njs/nginx \
   --add-module=/usr/src/nginx_cookie_flag_module \
+  --add-module=/usr/src/nginx_upstream_check_module \
   --with-cc-opt=-Wno-error \
   " \
   && addgroup -S nginx \
@@ -103,6 +104,7 @@ RUN GPG_KEYS=B0F4253373F8F6F510D42178520A9993A1C052F8 \
   && git clone --depth=1 --recursive https://github.com/nginx/njs \
   && git clone --depth=1 --recursive https://github.com/AirisX/nginx_cookie_flag_module \
   && git clone --depth=1 --recursive https://github.com/cloudflare/quiche \
+  && git clone --depth=1 --recursive https://github.com/yaoweibin/nginx_upstream_check_module.git \
   && curl -fSL https://nginx.org/download/nginx-$NGINX_VERSION.tar.gz -o nginx.tar.gz \
   && curl -fSL https://nginx.org/download/nginx-$NGINX_VERSION.tar.gz.asc  -o nginx.tar.gz.asc \
   && export GNUPGHOME="$(mktemp -d)" \
@@ -124,6 +126,7 @@ RUN GPG_KEYS=B0F4253373F8F6F510D42178520A9993A1C052F8 \
   && rm nginx.tar.gz \
   && cd /usr/src/nginx-$NGINX_VERSION \
   && patch -p01 < /usr/src/quiche/extras/nginx/nginx-1.16.patch \
+  && patch -p1 < /usr/src/nginx_upstream_check_module/check_1.14.0\+.patch \
   && ./configure $CONFIG --with-debug --build="quiche-$(git --git-dir=/usr/src/quiche/.git rev-parse --short HEAD) ngx_brotli-$(git --git-dir=/usr/src/ngx_brotli/.git rev-parse --short HEAD) headers-more-nginx-module-$(git --git-dir=/usr/src/headers-more-nginx-module/.git rev-parse --short HEAD) njs-$(git --git-dir=/usr/src/njs/.git rev-parse --short HEAD) nginx_cookie_flag_module-$(git --git-dir=/usr/src/nginx_cookie_flag_module/.git rev-parse --short HEAD)" \
   && make -j$(getconf _NPROCESSORS_ONLN) \
   && mv objs/nginx objs/nginx-debug \
@@ -176,10 +179,6 @@ RUN GPG_KEYS=B0F4253373F8F6F510D42178520A9993A1C052F8 \
   && apk del .gettext \
   && mv /tmp/envsubst /usr/local/bin/
 
-# Create self-signed certificate
-RUN apk add openssl \
-  && openssl req -x509 -newkey rsa:4096 -nodes -keyout /etc/ssl/private/localhost.key -out /etc/ssl/localhost.pem -days 365 -sha256 -subj '/CN=localhost'
-
 FROM alpine:latest
 
 COPY --from=builder /usr/sbin/nginx /usr/sbin/nginx-debug /usr/sbin/
@@ -187,14 +186,11 @@ COPY --from=builder /usr/lib/nginx /usr/lib/
 COPY --from=builder /usr/share/nginx/html/* /usr/share/nginx/html/
 COPY --from=builder /etc/nginx/* /etc/nginx/
 COPY --from=builder /usr/local/bin/envsubst /usr/local/bin/
-COPY --from=builder /etc/ssl/private/localhost.key /etc/ssl/private/
-COPY --from=builder /etc/ssl/localhost.pem /etc/ssl/
 
 RUN \
   # Bring in tzdata so users could set the timezones through the environment
   # variables
-  apk add --no-cache tzdata \
-  \
+  apk add --no-cache tzdata ca-certificates \
   && apk add --no-cache \
   pcre \
   libgcc \
@@ -214,10 +210,3 @@ RUN \
 STOPSIGNAL SIGTERM
 
 CMD ["nginx", "-g", "daemon off;"]
-
-# Build-time metadata as defined at http://label-schema.org
-ARG VCS_REF
-
-LABEL org.label-schema.build-date=$BUILD_DATE \
-  org.label-schema.vcs-ref=$VCS_REF \
-  org.label-schema.vcs-url="https://github.com/RanadeepPolavarapu/docker-nginx-http3.git"
